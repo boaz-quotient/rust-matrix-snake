@@ -1,10 +1,12 @@
 use crossterm::{
-    cursor, queue,
+    cursor,
+    event::{poll, read, Event, KeyCode},
+    queue,
     style::{self, Stylize},
     terminal,
 };
-use std::{collections::HashSet, io::Write, vec};
 use rand::Rng;
+use std::{collections::HashSet, io::Write, time::Duration, vec};
 
 trait CollisionDetector {
     fn has_collision(&self, point: &(u16, u16)) -> bool;
@@ -163,7 +165,7 @@ fn get_next_point(point: &(u16, u16), direction: &Direction) -> (u16, u16) {
         Direction::RIGHT => (point.0.saturating_add(1), point.1),
         Direction::LEFT => (point.0.saturating_sub(1), point.1),
         Direction::DOWN => (point.0, point.1.saturating_add(1)),
-        Direction::UP => (point.0 + 1, point.1.saturating_sub(1)),
+        Direction::UP => (point.0, point.1.saturating_sub(1)),
     }
 }
 
@@ -186,12 +188,15 @@ fn main() -> Result<(), std::io::Error> {
         from: (8, 8),
         to: (cols / 2, rows / 2),
     };
-    let initial_food_point = (rng.gen_range((area.from.0+1)..(area.to.0-1)), rng.gen_range((area.from.1+1)..(area.to.1-1)));
+    let initial_food_point = (
+        rng.gen_range((area.from.0 + 1)..(area.to.0 - 1)),
+        rng.gen_range((area.from.1 + 1)..(area.to.1 - 1)),
+    );
     let mut food = FoodState {
         vec: vec![initial_food_point],
         hash: HashSet::from([initial_food_point]),
     };
-    let direction: Direction = Direction::DOWN;
+    let mut direction: Direction = Direction::DOWN;
 
     screen.setup()?;
     loop {
@@ -219,7 +224,10 @@ fn main() -> Result<(), std::io::Error> {
         snake.push(&next_point);
         if food.has_collision(&next_point) {
             food.pop();
-            let point = (rng.gen_range((area.from.0+1)..(area.to.0-1)), rng.gen_range((area.from.1+1)..(area.to.1-1)));
+            let point = (
+                rng.gen_range((area.from.0 + 1)..(area.to.0 - 1)),
+                rng.gen_range((area.from.1 + 1)..(area.to.1 - 1)),
+            );
             food.push(point)
         } else {
             snake.pop();
@@ -227,7 +235,19 @@ fn main() -> Result<(), std::io::Error> {
 
         queue!(screen.output, cursor::MoveTo(cols, rows))?;
         screen.output.flush()?;
-        std::thread::sleep(std::time::Duration::from_millis(800));
+
+        if poll(Duration::from_millis(300))? {
+            if let Event::Key(key) = read()? {
+                match key.code {
+                    KeyCode::Up => direction = Direction::UP,
+                    KeyCode::Down => direction = Direction::DOWN,
+                    KeyCode::Right => direction = Direction::RIGHT,
+                    KeyCode::Left => direction = Direction::LEFT,
+                    _ => {}
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     screen.clear()?;
     Ok(())

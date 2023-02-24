@@ -4,6 +4,7 @@ use crossterm::{
     terminal,
 };
 use std::{collections::HashSet, io::Write, vec};
+use rand::Rng;
 
 trait CollisionDetector {
     fn has_collision(&self, point: &(u16, u16)) -> bool;
@@ -174,6 +175,7 @@ enum Direction {
 }
 
 fn main() -> Result<(), std::io::Error> {
+    let mut rng = rand::thread_rng();
     let (cols, rows) = terminal::size()?;
     let mut screen = ScreenPrinter::new();
     let mut snake = SnakeState {
@@ -184,9 +186,10 @@ fn main() -> Result<(), std::io::Error> {
         from: (8, 8),
         to: (cols / 2, rows / 2),
     };
+    let initial_food_point = (rng.gen_range((area.from.0+1)..(area.to.0-1)), rng.gen_range((area.from.1+1)..(area.to.1-1)));
     let mut food = FoodState {
-        vec: vec![(10, 15)],
-        hash: HashSet::from([(10, 15)]),
+        vec: vec![initial_food_point],
+        hash: HashSet::from([initial_food_point]),
     };
     let direction: Direction = Direction::DOWN;
 
@@ -215,11 +218,8 @@ fn main() -> Result<(), std::io::Error> {
         }
         snake.push(&next_point);
         if food.has_collision(&next_point) {
-            let p = food.pop();
-            let mut point = (10, 20);
-            if p.0 == 10 && p.1 == 20 {
-                point = (20, 10);
-            }
+            food.pop();
+            let point = (rng.gen_range((area.from.0+1)..(area.to.0-1)), rng.gen_range((area.from.1+1)..(area.to.1-1)));
             food.push(point)
         } else {
             snake.pop();

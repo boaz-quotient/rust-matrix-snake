@@ -9,6 +9,10 @@ trait CollisionDetector {
     fn has_collision(&self, point: &(u16, u16)) -> bool;
 }
 
+trait Vectorizor {
+    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)>;
+}
+
 struct SnakeState {
     vec: Vec<(u16, u16)>,
     hash: HashSet<(u16, u16)>,
@@ -17,6 +21,23 @@ struct SnakeState {
 impl CollisionDetector for SnakeState {
     fn has_collision(&self, point: &(u16, u16)) -> bool {
         self.hash.contains(point)
+    }
+}
+
+impl Vectorizor for SnakeState {
+    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
+        self.vec
+            .clone()
+            .into_iter()
+            .map(|point| {
+                (
+                    point.0,
+                    point.1,
+                    'ó'.with(style::Color::Cyan)
+                        .attribute(style::Attribute::Bold),
+                )
+            })
+            .collect()
     }
 }
 
@@ -33,21 +54,6 @@ impl SnakeState {
     fn pop(&mut self) {
         self.vec.pop().and_then(|p| Some(self.hash.remove(&p)));
     }
-
-    fn vectorized(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
-        self.vec
-            .clone()
-            .into_iter()
-            .map(|point| {
-                (
-                    point.0,
-                    point.1,
-                    'ó'.with(style::Color::Cyan)
-                        .attribute(style::Attribute::Bold),
-                )
-            })
-            .collect()
-    }
 }
 
 struct GameArea {
@@ -61,18 +67,17 @@ impl CollisionDetector for GameArea {
     }
 }
 
-impl GameArea {
-    fn vectorized(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
+impl Vectorizor for GameArea {
+    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
         let (x0, y0) = self.from;
         let (xn, yn) = self.to;
-        let block_char = '▒'.with(style::Color::Red);
+        let block_char = ' '.on(style::Color::Red);
 
-        let v = (x0..(xn + 1))
+        (x0..(xn + 1))
             .map(|x| [(x, y0, block_char), (x, yn, block_char)])
             .chain((y0..(yn + 1)).map(|y| [(x0, y, block_char), (xn, y, block_char)]))
             .flatten()
-            .collect();
-        v
+            .collect()
     }
 }
 
@@ -84,6 +89,23 @@ struct FoodState {
 impl CollisionDetector for FoodState {
     fn has_collision(&self, point: &(u16, u16)) -> bool {
         self.hash.contains(point)
+    }
+}
+
+impl Vectorizor for FoodState {
+    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
+        self.vec
+            .clone()
+            .into_iter()
+            .map(|point| {
+                (
+                    point.0,
+                    point.1,
+                    '$'.with(style::Color::Green)
+                        .attribute(style::Attribute::Bold),
+                )
+            })
+            .collect()
     }
 }
 
@@ -103,21 +125,6 @@ impl FoodState {
     fn push(&mut self, point: (u16, u16)) {
         self.vec.push(point);
         self.hash.insert(point);
-    }
-
-    fn vectorized(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
-        self.vec
-            .clone()
-            .into_iter()
-            .map(|point| {
-                (
-                    point.0,
-                    point.1,
-                    '$'.with(style::Color::Green)
-                        .attribute(style::Attribute::Bold),
-                )
-            })
-            .collect()
     }
 }
 
@@ -187,9 +194,9 @@ fn main() -> Result<(), std::io::Error> {
     loop {
         queue!(screen.output, terminal::Clear(terminal::ClearType::All))?;
 
-        let mut cursor_points = snake.vectorized();
-        cursor_points.append(&mut area.vectorized());
-        cursor_points.append(&mut food.vectorized());
+        let mut cursor_points = snake.vectorize();
+        cursor_points.append(&mut area.vectorize());
+        cursor_points.append(&mut food.vectorize());
 
         for ent in cursor_points {
             queue!(

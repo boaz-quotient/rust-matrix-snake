@@ -2,7 +2,7 @@ use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
     queue,
-    style::{self, Stylize},
+    style::{self, style, StyledContent, Stylize},
     terminal,
 };
 use rand::Rng;
@@ -12,39 +12,26 @@ trait CollisionDetector {
     fn has_collision(&self, point: &(u16, u16)) -> bool;
 }
 
-trait Vectorizor {
-    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)>;
-}
-
-struct SnakeState {
+#[derive(Clone, Debug)]
+struct LookupPointQueue {
     vec: Vec<(u16, u16)>,
     hash: HashSet<(u16, u16)>,
 }
 
-impl CollisionDetector for SnakeState {
-    fn has_collision(&self, point: &(u16, u16)) -> bool {
+impl LookupPointQueue {
+    fn new(points: &Vec<(u16, u16)>) -> Self {
+        let vec = points.clone();
+        let mut hash = HashSet::new();
+        for point in points {
+            hash.insert(point.clone());
+        }
+        Self { vec, hash }
+    }
+
+    fn lookup(&self, point: &(u16, u16)) -> bool {
         self.hash.contains(point)
     }
-}
 
-impl Vectorizor for SnakeState {
-    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
-        self.vec
-            .clone()
-            .into_iter()
-            .map(|point| {
-                (
-                    point.0,
-                    point.1,
-                    'ó'.with(style::Color::Cyan)
-                        .attribute(style::Attribute::Bold),
-                )
-            })
-            .collect()
-    }
-}
-
-impl SnakeState {
     fn head(&self) -> Option<&(u16, u16)> {
         self.vec.first()
     }
@@ -54,11 +41,32 @@ impl SnakeState {
         self.hash.insert(point.clone());
     }
 
-    fn pop(&mut self) {
-        self.vec.pop().and_then(|p| Some(self.hash.remove(&p)));
+    fn pop(&mut self) -> Option<(u16, u16)> {
+        self.vec.pop().and_then(|p| {
+            self.hash.remove(&p);
+            Some(p)
+        })
     }
 }
 
+impl Iterator for LookupPointQueue {
+    type Item = (u16, u16);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.vec.pop()
+    }
+}
+
+struct SnakeState {
+    lq: LookupPointQueue,
+}
+
+impl CollisionDetector for SnakeState {
+    fn has_collision(&self, point: &(u16, u16)) -> bool {
+        self.lq.lookup(point)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct GameArea {
     from: (u16, u16),
     to: (u16, u16),
@@ -66,68 +74,33 @@ struct GameArea {
 
 impl CollisionDetector for GameArea {
     fn has_collision(&self, point: &(u16, u16)) -> bool {
-        point.0 < self.from.0 || point.0 > self.to.0 || point.1 < self.from.1 || point.1 > self.to.1
+        point.0 <= self.from.0
+            || point.0 >= self.to.0
+            || point.1 <= self.from.1
+            || point.1 >= self.to.1
     }
 }
 
-impl Vectorizor for GameArea {
-    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
+impl Into<Vec<(u16, u16)>> for GameArea {
+    fn into(self) -> Vec<(u16, u16)> {
         let (x0, y0) = self.from;
         let (xn, yn) = self.to;
-        let block_char = ' '.on(style::Color::Red);
 
         (x0..(xn + 1))
-            .map(|x| [(x, y0, block_char), (x, yn, block_char)])
-            .chain((y0..(yn + 1)).map(|y| [(x0, y, block_char), (xn, y, block_char)]))
+            .map(|x| [(x, y0), (x, yn)])
+            .chain((y0..(yn + 1)).map(|y| [(x0, y), (xn, y)]))
             .flatten()
-            .collect()
+            .collect::<Vec<(u16, u16)>>()
     }
 }
 
 struct FoodState {
-    vec: Vec<(u16, u16)>,
-    hash: HashSet<(u16, u16)>,
+    lq: LookupPointQueue,
 }
 
 impl CollisionDetector for FoodState {
     fn has_collision(&self, point: &(u16, u16)) -> bool {
-        self.hash.contains(point)
-    }
-}
-
-impl Vectorizor for FoodState {
-    fn vectorize(&self) -> Vec<(u16, u16, style::StyledContent<char>)> {
-        self.vec
-            .clone()
-            .into_iter()
-            .map(|point| {
-                (
-                    point.0,
-                    point.1,
-                    '$'.with(style::Color::Green)
-                        .attribute(style::Attribute::Bold),
-                )
-            })
-            .collect()
-    }
-}
-
-impl FoodState {
-    fn pop(&mut self) -> (u16, u16) {
-        self.vec
-            .pop()
-            .and_then(|p| {
-                if self.hash.contains(&p) {
-                    self.hash.remove(&p);
-                }
-                Some(p)
-            })
-            .unwrap_or((0, 0))
-    }
-
-    fn push(&mut self, point: (u16, u16)) {
-        self.vec.push(point);
-        self.hash.insert(point);
+        self.lq.lookup(point)
     }
 }
 
@@ -178,23 +151,27 @@ enum Direction {
 
 fn main() -> Result<(), std::io::Error> {
     let mut rng = rand::thread_rng();
+    let japanese_vec: Vec<char> = (65382..=65437)
+        .collect::<Vec<u32>>()
+        .iter()
+        .map(|n| std::char::from_u32(*n).unwrap_or(' '))
+        .collect();
     let (cols, rows) = terminal::size()?;
     let mut screen = ScreenPrinter::new();
-    let mut snake = SnakeState {
-        vec: vec![(10, 10)],
-        hash: HashSet::from([(10, 10)]),
-    };
     let area = GameArea {
-        from: (8, 8),
-        to: (cols / 2, rows / 2),
+        from: (cols / 4, rows / 4),
+        to: (3 * cols / 4, 3 * rows / 4),
+    };
+    let area_vec: Vec<(u16, u16)> = area.clone().into();
+    let mut snake = SnakeState {
+        lq: LookupPointQueue::new(&vec![(area.from.0 + 1, area.from.1 + 1)]),
     };
     let initial_food_point = (
         rng.gen_range((area.from.0 + 1)..(area.to.0 - 1)),
         rng.gen_range((area.from.1 + 1)..(area.to.1 - 1)),
     );
     let mut food = FoodState {
-        vec: vec![initial_food_point],
-        hash: HashSet::from([initial_food_point]),
+        lq: LookupPointQueue::new(&vec![initial_food_point]),
     };
     let mut direction: Direction = Direction::DOWN;
 
@@ -202,11 +179,36 @@ fn main() -> Result<(), std::io::Error> {
     loop {
         queue!(screen.output, terminal::Clear(terminal::ClearType::All))?;
 
-        let mut cursor_points = snake.vectorize();
-        cursor_points.append(&mut area.vectorize());
-        cursor_points.append(&mut food.vectorize());
+        let s = snake
+            .lq
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(ix, point)| {
+                let mut chr = japanese_vec[rng.gen_range(0..japanese_vec.len())]
+                    .with(style::Color::DarkGreen)
+                    .attribute(style::Attribute::Bold);
+                if ix == snake.lq.vec.len() - 1 {
+                    chr = chr.with(style::Color::White);
+                }
+                (point.0, point.1, chr)
+            })
+            .chain(
+                area_vec
+                    .clone()
+                    .into_iter()
+                    .map(|point| (point.0, point.1, ' '.on_magenta())),
+            )
+            .chain(food.lq.clone().into_iter().map(|point| {
+                (
+                    point.0,
+                    point.1,
+                    '$'.with(style::Color::White)
+                        .attribute(style::Attribute::Bold),
+                )
+            }));
 
-        for ent in cursor_points {
+        for ent in s.collect::<Vec<(u16, u16, StyledContent<char>)>>() {
             queue!(
                 screen.output,
                 cursor::MoveTo(ent.0, ent.1),
@@ -214,23 +216,22 @@ fn main() -> Result<(), std::io::Error> {
             )?;
         }
 
-        let next_point = get_next_point(snake.head().unwrap_or(&area.from), &direction);
+        let next_point = get_next_point(snake.lq.head().unwrap_or(&area.from), &direction);
         if snake.has_collision(&next_point) {
             break;
         }
         if area.has_collision(&next_point) {
             break;
         }
-        snake.push(&next_point);
+        snake.lq.push(&next_point);
         if food.has_collision(&next_point) {
-            food.pop();
-            let point = (
+            food.lq.pop();
+            food.lq.push(&(
                 rng.gen_range((area.from.0 + 1)..(area.to.0 - 1)),
                 rng.gen_range((area.from.1 + 1)..(area.to.1 - 1)),
-            );
-            food.push(point)
+            ))
         } else {
-            snake.pop();
+            snake.lq.pop();
         }
 
         queue!(screen.output, cursor::MoveTo(cols, rows))?;
@@ -247,7 +248,7 @@ fn main() -> Result<(), std::io::Error> {
                 }
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
     screen.clear()?;
     Ok(())
